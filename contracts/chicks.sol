@@ -12,7 +12,7 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
     
     address public FEE_ADDRESS;
-    address public immutable EGGS_TOKEN;
+    address public immutable USDC_TOKEN;
 
     uint256 private constant MIN = 1000;
 
@@ -26,7 +26,7 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
 
     bool public start = false;
 
-    uint128 private constant EGGSinWEI = 1 * 10 ** 18;
+    uint128 private constant USDCinWEI = 1 * 10 ** 6;
 
     uint256 private totalBorrowed = 0;
     uint256 private totalCollateral = 0;
@@ -47,7 +47,7 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
     mapping(uint256 => uint256) public BorrowedByDate;
     mapping(uint256 => uint256) public CollateralByDate;
     uint256 public lastLiquidationDate;
-    event Price(uint256 time, uint256 price, uint256 volumeInEggs);
+    event Price(uint256 time, uint256 price, uint256 volumeInUSDC);
     event MaxUpdated(uint256 max);
     event SellFeeUpdated(uint256 sellFee);
     event FeeAddressUpdated(address _address);
@@ -61,27 +61,27 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         uint256 totalBorrowed,
         uint256 totalCollateral
     );
-    event SendEggs(address to, uint256 amount);
+    event SendUSDC(address to, uint256 amount);
 
-    constructor(address _eggsToken) ERC20("Chicks", "CHICKS") Ownable(msg.sender) {
-        require(_eggsToken != address(0), "EGGS token address cannot be zero");
-        EGGS_TOKEN = _eggsToken;
+    constructor(address _usdcToken) ERC20("Chicks", "CHICKS") Ownable(msg.sender) {
+        require(_usdcToken != address(0), "USDC token address cannot be zero");
+        USDC_TOKEN = _usdcToken;
         lastLiquidationDate = getMidnightTimestamp(block.timestamp);
     }
 
-    function setStart(uint256 eggsAmount) public onlyOwner {
+    function setStart(uint256 usdcAmount) public onlyOwner {
         require(FEE_ADDRESS != address(0x0), "Must set fee address");
-        require(eggsAmount >= 1 ether, "Must provide at least 1 EGGS");
+        require(usdcAmount >= 1 * 10**6, "Must provide at least 1 USDC");
         
-        IERC20(EGGS_TOKEN).safeTransferFrom(msg.sender, address(this), eggsAmount);
+        IERC20(USDC_TOKEN).safeTransferFrom(msg.sender, address(this), usdcAmount);
         
-        uint256 teamMint = eggsAmount * MIN;
+        uint256 teamMint = usdcAmount * MIN;
         mint(msg.sender, teamMint);
 
         _transfer(
             msg.sender,
             0x000000000000000000000000000000000000dEaD,
-            1 ether
+            1 * 10**6
         );
         start = true;
         emit Started(true);
@@ -125,21 +125,21 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         emit SellFeeUpdated(amount);
     }
 
-    function buy(address receiver, uint256 eggsAmount) external nonReentrant {
+    function buy(address receiver, uint256 usdcAmount) external nonReentrant {
         liquidate();
         require(start, "Trading must be initialized");
         require(receiver != address(0x0), "Receiver cannot be 0x0 address");
 
-        IERC20(EGGS_TOKEN).safeTransferFrom(msg.sender, address(this), eggsAmount);
+        IERC20(USDC_TOKEN).safeTransferFrom(msg.sender, address(this), usdcAmount);
 
         // Mint Chicks to receiver
-        uint256 chicks = EGGStoCHICKS(eggsAmount);
+        uint256 chicks = USDCtoCHICKS(usdcAmount);
         mint(receiver, (chicks * getBuyFee()) / FEE_BASE_1000);
 
         // Team fee
-        uint256 feeAddressAmount = eggsAmount / FEES_BUY;
+        uint256 feeAddressAmount = usdcAmount / FEES_BUY;
         require(feeAddressAmount > MIN, "must trade over min");
-        sendEggs(FEE_ADDRESS, feeAddressAmount);
+        sendUSDC(FEE_ADDRESS, feeAddressAmount);
 
         safetyCheck(eggsAmount);
     }
@@ -147,19 +147,19 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
     function sell(uint256 chicks) external nonReentrant {
         liquidate();
 
-        // Total Eggs to be sent
-        uint256 eggs = CHICKStoEGGS(chicks);
+        // Total USDC to be sent
+        uint256 usdc = CHICKStoUSDC(chicks);
 
         // Burn CHICKS
-        uint256 feeAddressAmount = eggs / FEES_SELL;
+        uint256 feeAddressAmount = usdc / FEES_SELL;
         _burn(msg.sender, chicks);
 
         // Payment to sender
-        sendEggs(msg.sender, (eggs * sell_fee) / FEE_BASE_1000);
+        sendUSDC(msg.sender, (usdc * sell_fee) / FEE_BASE_1000);
 
         // Team fee
         require(feeAddressAmount > MIN, "must trade over min");
-        sendEggs(FEE_ADDRESS, feeAddressAmount);
+        sendUSDC(FEE_ADDRESS, feeAddressAmount);
 
         safetyCheck(eggs);
     }
@@ -406,24 +406,24 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         uint256 borrowed = Loans[msg.sender].borrowed;
         uint256 collateral = Loans[msg.sender].collateral;
 
-        uint256 collateralInEggs = CHICKStoEGGS(collateral);
+        uint256 collateralInUSDC = CHICKStoUSDC(collateral);
         _burn(address(this), collateral);
 
-        uint256 collateralInEggsAfterFee = (collateralInEggs * 99) / 100;
-        uint256 fee = collateralInEggs / 100;
+        uint256 collateralInUSDCAfterFee = (collateralInUSDC * 99) / 100;
+        uint256 fee = collateralInUSDC / 100;
         
         require(
-            collateralInEggsAfterFee >= borrowed,
+            collateralInUSDCAfterFee >= borrowed,
             "You do not have enough collateral to close position"
         );
 
-        uint256 toUser = collateralInEggsAfterFee - borrowed;
+        uint256 toUser = collateralInUSDCAfterFee - borrowed;
         uint256 feeAddressFee = (fee * 3) / 10;
 
-        sendEggs(msg.sender, toUser);
+        sendUSDC(msg.sender, toUser);
 
         require(feeAddressFee > MIN, "Fees must be higher than min.");
-        sendEggs(FEE_ADDRESS, feeAddressFee);
+        sendUSDC(FEE_ADDRESS, feeAddressFee);
         subLoansByDate(borrowed, collateral, Loans[msg.sender].endDate);
 
         delete Loans[msg.sender];
@@ -565,7 +565,7 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
     }
 
     function getBacking() public view returns (uint256) {
-        return IERC20(EGGS_TOKEN).balanceOf(address(this)) + getTotalBorrowed();
+        return IERC20(USDC_TOKEN).balanceOf(address(this)) + getTotalBorrowed();
     }
 
     function safetyCheck(uint256 eggs) private {
@@ -580,15 +580,15 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         emit Price(block.timestamp, newPrice, eggs);
     }
 
-    function CHICKStoEGGS(uint256 value) public view returns (uint256) {
+    function CHICKStoUSDC(uint256 value) public view returns (uint256) {
         return Math.mulDiv(value, getBacking(), totalSupply());
     }
 
-    function EGGStoCHICKS(uint256 value) public view returns (uint256) {
+    function USDCtoCHICKS(uint256 value) public view returns (uint256) {
         return Math.mulDiv(value, totalSupply(), getBacking() - value);
     }
 
-    function EGGStoCHICKSLev(
+    function USDCtoCHICKSLev(
         uint256 value,
         uint256 fee
     ) public view returns (uint256) {
@@ -596,21 +596,21 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         return (value * totalSupply() + (backing - 1)) / backing;
     }
 
-    function EGGStoCHICKSNoTradeCeil(
+    function USDCtoCHICKSNoTradeCeil(
         uint256 value
     ) public view returns (uint256) {
         uint256 backing = getBacking();
         return (value * totalSupply() + (backing - 1)) / backing;
     }
 
-    function EGGStoCHICKSNoTrade(uint256 value) public view returns (uint256) {
+    function USDCtoCHICKSNoTrade(uint256 value) public view returns (uint256) {
         uint256 backing = getBacking();
         return Math.mulDiv(value, totalSupply(), backing);
     }
 
-    function sendEggs(address _address, uint256 _value) internal {
-        IERC20(EGGS_TOKEN).safeTransfer(_address, _value);
-        emit SendEggs(_address, _value);
+    function sendUSDC(address _address, uint256 _value) internal {
+        IERC20(USDC_TOKEN).safeTransfer(_address, _value);
+        emit SendUSDC(_address, _value);
     }
 
     //utils
