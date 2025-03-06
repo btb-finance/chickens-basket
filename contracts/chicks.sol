@@ -752,7 +752,7 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         uint256 excessLiquidity = 0;
         
         // Calculate excess liquidity (anything above buffer + 10% of totalBorrowed for safety)
-        if (balance > minLiquidityBuffer + (totalBorrowed / 10)) {
+        if (balance > minLiquidityBuffer + (totalBorrowed / 1)) {
             excessLiquidity = balance - minLiquidityBuffer - (totalBorrowed / 10);
         }
         
