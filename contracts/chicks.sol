@@ -2,17 +2,18 @@
 pragma solidity 0.8.28;
 
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
     
-    address public FEE_ADDRESS;
-    address public immutable USDC_TOKEN;
+    // USDC token address
+    IERC20 public usdcToken;
+    address payable public FEE_ADDRESS;
 
     uint256 private constant MIN = 1000;
 
@@ -63,32 +64,27 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
     );
     event SendUSDC(address to, uint256 amount);
 
-    constructor(address _usdcToken) ERC20("Chicks", "CHICKS") Ownable(msg.sender) {
-        require(_usdcToken != address(0), "USDC token address cannot be zero");
-        USDC_TOKEN = _usdcToken;
+    constructor(address _usdcToken) ERC20("CHICKS", "CHICKS") Ownable(msg.sender) {
+        usdcToken = IERC20(_usdcToken);
         lastLiquidationDate = getMidnightTimestamp(block.timestamp);
     }
-
-    function setStart(uint256 usdcAmount) public onlyOwner {
+    function setStart(uint256 _usdcAmount) public onlyOwner {
         require(FEE_ADDRESS != address(0x0), "Must set fee address");
-        require(usdcAmount >= 1 * 10**6, "Must provide at least 1 USDC");
-        
-        IERC20(USDC_TOKEN).safeTransferFrom(msg.sender, address(this), usdcAmount);
-        
-        uint256 teamMint = usdcAmount * MIN;
+        uint256 teamMint = _usdcAmount * MIN;
+        require(teamMint >= 1 * 10 ** 6);
         mint(msg.sender, teamMint);
 
         _transfer(
             msg.sender,
             0x000000000000000000000000000000000000dEaD,
-            1 * 10**6
+            1 * 10 ** 6
         );
         start = true;
         emit Started(true);
     }
 
     function mint(address to, uint256 value) private {
-        require(to != address(0x0), "Can't mint to 0x0 address");
+        require(to != address(0x0), "Can't mint to to 0x0 address");
         totalMinted = totalMinted + value;
         require(totalMinted <= maxSupply, "NO MORE CHICKS");
 
@@ -100,7 +96,7 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
             _address != address(0x0),
             "Can't set fee address to 0x0 address"
         );
-        FEE_ADDRESS = _address;
+        FEE_ADDRESS = payable(_address);
         emit FeeAddressUpdated(_address);
     }
 
@@ -110,47 +106,48 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         buy_fee = amount;
         emit BuyFeeUpdated(amount);
     }
-
     function setBuyFeeLeverage(uint16 amount) external onlyOwner {
         require(amount <= 25, "leverage buy fee must be less 2.5%");
         require(amount >= 0, "leverage buy fee must be greater than 0%");
         buy_fee_leverage = amount;
         emit LeverageFeeUpdated(amount);
     }
-
     function setSellFee(uint16 amount) external onlyOwner {
         require(amount <= 992, "sell fee must be greater than FEES_SELL");
         require(amount >= 975, "sell fee must be less than 2.5%");
         sell_fee = amount;
         emit SellFeeUpdated(amount);
     }
-
-    function buy(address receiver, uint256 usdcAmount) external nonReentrant {
+    function buy(address receiver, uint256 _usdcAmount) external nonReentrant {
         liquidate();
         require(start, "Trading must be initialized");
-        require(receiver != address(0x0), "Receiver cannot be 0x0 address");
 
-        IERC20(USDC_TOKEN).safeTransferFrom(msg.sender, address(this), usdcAmount);
+        require(receiver != address(0x0), "Reciever cannot be 0x0 address");
 
-        // Mint Chicks to receiver
-        uint256 chicks = USDCtoCHICKS(usdcAmount);
+        // Mint Eggs to sender
+        // AUDIT: to user round down
+        uint256 chicks = USDCtoChicks(_usdcAmount);
+        
+        // Transfer USDC from sender to this contract
+        usdcToken.safeTransferFrom(msg.sender, address(this), _usdcAmount);
+
         mint(receiver, (chicks * getBuyFee()) / FEE_BASE_1000);
 
         // Team fee
-        uint256 feeAddressAmount = usdcAmount / FEES_BUY;
+        uint256 feeAddressAmount = _usdcAmount / FEES_BUY;
         require(feeAddressAmount > MIN, "must trade over min");
         sendUSDC(FEE_ADDRESS, feeAddressAmount);
 
-        safetyCheck(eggsAmount);
+        safetyCheck(_usdcAmount);
     }
-
     function sell(uint256 chicks) external nonReentrant {
         liquidate();
 
-        // Total USDC to be sent
-        uint256 usdc = CHICKStoUSDC(chicks);
+        // Total Eth to be sent
+        // AUDIT: to user round down
+        uint256 usdc = ChicksToUSDC(chicks);
 
-        // Burn CHICKS
+        // Burn of JAY
         uint256 feeAddressAmount = usdc / FEES_SELL;
         _burn(msg.sender, chicks);
 
@@ -158,29 +155,31 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         sendUSDC(msg.sender, (usdc * sell_fee) / FEE_BASE_1000);
 
         // Team fee
+
         require(feeAddressAmount > MIN, "must trade over min");
         sendUSDC(FEE_ADDRESS, feeAddressAmount);
 
-        safetyCheck(eggs);
+        safetyCheck(usdc);
     }
 
     // Calculation may be off if liqudation is due to occur
     function getBuyAmount(uint256 amount) public view returns (uint256) {
-        uint256 chicks = EGGStoCHICKSNoTrade(amount);
+        uint256 chicks = USDCtoChicksNoTrade(amount);
         return ((chicks * getBuyFee()) / FEE_BASE_1000);
     }
-
     function leverageFee(
-        uint256 eggs,
+        uint256 usdc,
         uint256 numberOfDays
     ) public view returns (uint256) {
-        uint256 mintFee = (eggs * buy_fee_leverage) / FEE_BASE_1000;
-        uint256 interest = getInterestFee(eggs, numberOfDays);
+        uint256 mintFee = (usdc * buy_fee_leverage) / FEE_BASE_1000;
+
+        uint256 interest = getInterestFee(usdc, numberOfDays);
+
         return (mintFee + interest);
     }
 
     function leverage(
-        uint256 eggs,
+        uint256 usdc,
         uint256 numberOfDays
     ) public nonReentrant {
         require(start, "Trading must be initialized");
@@ -204,24 +203,24 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
             (numberOfDays * 1 days) + block.timestamp
         );
 
-        uint256 eggsFee = leverageFee(eggs, numberOfDays);
-        uint256 userEggs = eggs - eggsFee;
+        uint256 usdcFee = leverageFee(usdc, numberOfDays);
 
-        uint256 feeAddressAmount = (eggsFee * 3) / 10;
-        uint256 userBorrow = (userEggs * 99) / 100;
-        uint256 overCollateralizationAmount = (userEggs) / 100;
-        uint256 totalFee = eggsFee + overCollateralizationAmount;
+        uint256 userUSDC = usdc - usdcFee;
 
-        IERC20(EGGS_TOKEN).safeTransferFrom(msg.sender, address(this), totalFee);
+        uint256 feeAddressAmount = (usdcFee * 3) / 10;
+        uint256 userBorrow = (userUSDC * 99) / 100;
+        uint256 overCollateralizationAmount = (userUSDC) / 100;
+        uint256 subValue = feeAddressAmount + overCollateralizationAmount;
+        uint256 totalFee = (usdcFee + overCollateralizationAmount);
+        // Transfer USDC from sender to contract
+        usdcToken.safeTransferFrom(msg.sender, address(this), totalFee);
 
-        // CHICKS to user
-        uint256 userChicks = EGGStoCHICKSLev(userEggs, feeAddressAmount + overCollateralizationAmount);
+        // AUDIT: to user round down
+        uint256 userChicks = USDCtoChicksLev(userUSDC, subValue);
         mint(address(this), userChicks);
 
         require(feeAddressAmount > MIN, "Fees must be higher than min.");
-        sendEggs(FEE_ADDRESS, feeAddressAmount);
-
-        IERC20(EGGS_TOKEN).safeTransfer(msg.sender, userBorrow);
+        sendUSDC(FEE_ADDRESS, feeAddressAmount);
 
         addLoansByDate(userBorrow, userChicks, endDate);
         Loans[msg.sender] = Loan({
@@ -231,23 +230,23 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
             numberOfDays: numberOfDays
         });
 
-        safetyCheck(eggs);
+        safetyCheck(usdc);
     }
 
     function getInterestFee(
         uint256 amount,
         uint256 numberOfDays
     ) public pure returns (uint256) {
-        uint256 interest = Math.mulDiv(0.039e18, numberOfDays, 365) + 0.001e18;
+        uint256 interest = Math.mulDiv(0.039e6, numberOfDays, 365) + 0.001e6;
         return Math.mulDiv(amount, interest, 1e18);
     }
 
-    function borrow(uint256 eggs, uint256 numberOfDays) public nonReentrant {
+    function borrow(uint256 usdc, uint256 numberOfDays) public nonReentrant {
         require(
             numberOfDays < 366,
             "Max borrow/extension must be 365 days or less"
         );
-        require(eggs != 0, "Must borrow more than 0");
+        require(usdc != 0, "Must borrow more than 0");
         if (isLoanExpired(msg.sender)) {
             delete Loans[msg.sender];
         }
@@ -260,12 +259,14 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
             (numberOfDays * 1 days) + block.timestamp
         );
 
-        uint256 eggsFee = getInterestFee(eggs, numberOfDays);
-        uint256 feeAddressFee = (eggsFee * 3) / 10;
+        uint256 usdcFee = getInterestFee(usdc, numberOfDays);
 
-        // CHICKS required from user
-        uint256 userChicks = EGGStoCHICKSNoTradeCeil(eggs);
-        uint256 newUserBorrow = (eggs * 99) / 100;
+        uint256 feeAddressFee = (usdcFee * 3) / 10;
+
+        //AUDIT: chicks required from user round up?
+        uint256 userChicks = USDCtoChicksNoTradeCeil(usdc);
+
+        uint256 newUserBorrow = (usdc * 99) / 100;
 
         Loans[msg.sender] = Loan({
             collateral: userChicks,
@@ -277,17 +278,16 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         _transfer(msg.sender, address(this), userChicks);
         require(feeAddressFee > MIN, "Fees must be higher than min.");
 
-        sendEggs(msg.sender, newUserBorrow - eggsFee);
-        sendEggs(FEE_ADDRESS, feeAddressFee);
+        sendUSDC(msg.sender, newUserBorrow - usdcFee);
+        sendUSDC(FEE_ADDRESS, feeAddressFee);
 
         addLoansByDate(newUserBorrow, userChicks, endDate);
 
-        safetyCheck(eggsFee);
+        safetyCheck(usdcFee);
     }
-
-    function borrowMore(uint256 eggs) public nonReentrant {
+    function borrowMore(uint256 usdc) public nonReentrant {
         require(!isLoanExpired(msg.sender), "Loan expired use borrow");
-        require(eggs != 0, "Must borrow more than 0");
+        require(usdc != 0, "Must borrow more than 0");
         liquidate();
         uint256 userBorrowed = Loans[msg.sender].borrowed;
         uint256 userCollateral = Loans[msg.sender].collateral;
@@ -296,10 +296,11 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         uint256 todayMidnight = getMidnightTimestamp(block.timestamp);
         uint256 newBorrowLength = (userEndDate - todayMidnight) / 1 days;
 
-        uint256 eggsFee = getInterestFee(eggs, newBorrowLength);
+        uint256 usdcFee = getInterestFee(usdc, newBorrowLength);
 
-        uint256 userChicks = EGGStoCHICKSNoTradeCeil(eggs);
-        uint256 userBorrowedInChicks = EGGStoCHICKSNoTrade(userBorrowed);
+        //AUDIT: chicks required from user round up?
+        uint256 userChicks = USDCtoChicksNoTradeCeil(usdc);
+        uint256 userBorrowedInChicks = USDCtoChicksNoTrade(userBorrowed);
         uint256 userExcessInChicks = ((userCollateral) * 99) /
             100 -
             userBorrowedInChicks;
@@ -310,11 +311,12 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         } else {
             requireCollateralFromUser =
                 requireCollateralFromUser -
-                userExcessInChicks;
+                userExcessInEggs;
         }
 
-        uint256 feeAddressFee = (eggsFee * 3) / 10;
-        uint256 newUserBorrow = (eggs * 99) / 100;
+        uint256 feeAddressFee = (usdcFee * 3) / 10;
+
+        uint256 newUserBorrow = (usdc * 99) / 100;
 
         uint256 newUserBorrowTotal = userBorrowed + newUserBorrow;
         uint256 newUserCollateralTotal = userCollateral +
@@ -332,12 +334,12 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         }
 
         require(feeAddressFee > MIN, "Fees must be higher than min.");
-        sendEggs(FEE_ADDRESS, feeAddressFee);
-        sendEggs(msg.sender, newUserBorrow - eggsFee);
+        sendUSDC(FEE_ADDRESS, feeAddressFee);
+        sendUSDC(msg.sender, newUserBorrow - usdcFee);
 
         addLoansByDate(newUserBorrow, requireCollateralFromUser, userEndDate);
 
-        safetyCheck(eggsFee);
+        safetyCheck(usdcFee);
     }
 
     function removeCollateral(uint256 amount) public nonReentrant {
@@ -347,10 +349,10 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         );
         liquidate();
         uint256 collateral = Loans[msg.sender].collateral;
-        
+        // AUDIT: to user round down
         require(
             Loans[msg.sender].borrowed <=
-                (CHICKStoEGGS(collateral - amount) * 99) / 100,
+                (ChicksToUSDC(collateral - amount) * 99) / 100,
             "Require 99% collateralization rate"
         );
         Loans[msg.sender].collateral = Loans[msg.sender].collateral - amount;
@@ -359,44 +361,41 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
 
         safetyCheck(0);
     }
-
-    function repay(uint256 eggsAmount) public nonReentrant {
+    function repay(uint256 repayAmount) public nonReentrant {
         uint256 borrowed = Loans[msg.sender].borrowed;
-        require(borrowed > eggsAmount, "Must repay less than borrowed amount");
-        require(eggsAmount != 0, "Must repay something");
+        require(borrowed > repayAmount, "Must repay less than borrowed amount");
+        require(repayAmount != 0, "Must repay something");
 
         require(
             !isLoanExpired(msg.sender),
             "Your loan has been liquidated, cannot repay"
         );
+        uint256 newBorrow = borrowed - repayAmount;
         
-        IERC20(EGGS_TOKEN).safeTransferFrom(msg.sender, address(this), eggsAmount);
-        
-        uint256 newBorrow = borrowed - eggsAmount;
+        // Transfer USDC from sender to this contract
+        usdcToken.safeTransferFrom(msg.sender, address(this), repayAmount);
         Loans[msg.sender].borrowed = newBorrow;
-        subLoansByDate(eggsAmount, 0, Loans[msg.sender].endDate);
+        subLoansByDate(repayAmount, 0, Loans[msg.sender].endDate);
 
         safetyCheck(0);
     }
-
-    function closePosition(uint256 eggsAmount) public nonReentrant {
+    function closePosition(uint256 repayAmount) public nonReentrant {
         uint256 borrowed = Loans[msg.sender].borrowed;
         uint256 collateral = Loans[msg.sender].collateral;
         require(
             !isLoanExpired(msg.sender),
             "Your loan has been liquidated, no collateral to remove"
         );
-        require(borrowed == eggsAmount, "Must return entire borrowed amount");
+        require(borrowed == repayAmount, "Must return entire borrowed amount");
         
-        IERC20(EGGS_TOKEN).safeTransferFrom(msg.sender, address(this), eggsAmount);
-        
+        // Transfer USDC from sender to this contract
+        usdcToken.safeTransferFrom(msg.sender, address(this), repayAmount);
         _transfer(address(this), msg.sender, collateral);
         subLoansByDate(borrowed, collateral, Loans[msg.sender].endDate);
 
         delete Loans[msg.sender];
         safetyCheck(0);
     }
-
     function flashClosePosition() public nonReentrant {
         require(
             !isLoanExpired(msg.sender),
@@ -404,14 +403,16 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         );
         liquidate();
         uint256 borrowed = Loans[msg.sender].borrowed;
+
         uint256 collateral = Loans[msg.sender].collateral;
 
-        uint256 collateralInUSDC = CHICKStoUSDC(collateral);
+        // AUDIT: from user round up
+        uint256 collateralInUSDC = ChicksToUSDC(collateral);
         _burn(address(this), collateral);
 
         uint256 collateralInUSDCAfterFee = (collateralInUSDC * 99) / 100;
+
         uint256 fee = collateralInUSDC / 100;
-        
         require(
             collateralInUSDCAfterFee >= borrowed,
             "You do not have enough collateral to close position"
@@ -432,7 +433,7 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
 
     function extendLoan(
         uint256 numberOfDays,
-        uint256 eggsAmount
+        uint256 extensionFee
     ) public nonReentrant returns (uint256) {
         uint256 oldEndDate = Loans[msg.sender].endDate;
         uint256 borrowed = Loans[msg.sender].borrowed;
@@ -446,13 +447,13 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
             !isLoanExpired(msg.sender),
             "Your loan has been liquidated, no collateral to remove"
         );
-        require(loanFee == eggsAmount, "Loan extension fee incorrect");
+        require(loanFee == extensionFee, "Loan extension fee incorrect");
         
-        IERC20(EGGS_TOKEN).safeTransferFrom(msg.sender, address(this), eggsAmount);
-        
+        // Transfer USDC from sender to this contract
+        usdcToken.safeTransferFrom(msg.sender, address(this), extensionFee);
         uint256 feeAddressFee = (loanFee * 3) / 10;
         require(feeAddressFee > MIN, "Fees must be higher than min.");
-        sendEggs(FEE_ADDRESS, feeAddressFee);
+        sendUSDC(FEE_ADDRESS, feeAddressFee);
         subLoansByDate(borrowed, collateral, oldEndDate);
         addLoansByDate(borrowed, collateral, newEndDate);
         Loans[msg.sender].endDate = newEndDate;
@@ -462,7 +463,7 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
             "Loan must be under 365 days"
         );
 
-        safetyCheck(eggsAmount);
+        safetyCheck(extensionFee);
         return loanFee;
     }
 
@@ -501,7 +502,6 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
             totalCollateral
         );
     }
-
     function subLoansByDate(
         uint256 borrowed,
         uint256 collateral,
@@ -556,6 +556,8 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         return buy_fee;
     }
 
+    // Buy Eggs
+
     function getTotalBorrowed() public view returns (uint256) {
         return totalBorrowed;
     }
@@ -565,30 +567,30 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
     }
 
     function getBacking() public view returns (uint256) {
-        return IERC20(USDC_TOKEN).balanceOf(address(this)) + getTotalBorrowed();
+        return usdcToken.balanceOf(address(this)) + getTotalBorrowed();
     }
 
-    function safetyCheck(uint256 eggs) private {
-        uint256 newPrice = (getBacking() * 1 ether) / totalSupply();
+    function safetyCheck(uint256 usdc) private {
+        uint256 newPrice = (getBacking() * USDCinWEI) / totalSupply();
         uint256 _totalColateral = balanceOf(address(this));
         require(
             _totalColateral >= totalCollateral,
-            "The chicks balance of the contract must be greater than or equal to the collateral"
+            "The eggs balance of the contract must be greater than or equal to the collateral"
         );
         require(lastPrice <= newPrice, "The price of chicks cannot decrease");
         lastPrice = newPrice;
-        emit Price(block.timestamp, newPrice, eggs);
+        emit Price(block.timestamp, newPrice, usdc);
     }
 
-    function CHICKStoUSDC(uint256 value) public view returns (uint256) {
+    function ChicksToUSDC(uint256 value) public view returns (uint256) {
         return Math.mulDiv(value, getBacking(), totalSupply());
     }
 
-    function USDCtoCHICKS(uint256 value) public view returns (uint256) {
+    function USDCtoChicks(uint256 value) public view returns (uint256) {
         return Math.mulDiv(value, totalSupply(), getBacking() - value);
     }
 
-    function USDCtoCHICKSLev(
+    function USDCtoChicksLev(
         uint256 value,
         uint256 fee
     ) public view returns (uint256) {
@@ -596,28 +598,31 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         return (value * totalSupply() + (backing - 1)) / backing;
     }
 
-    function USDCtoCHICKSNoTradeCeil(
+    function USDCtoChicksNoTradeCeil(
         uint256 value
     ) public view returns (uint256) {
         uint256 backing = getBacking();
         return (value * totalSupply() + (backing - 1)) / backing;
     }
-
-    function USDCtoCHICKSNoTrade(uint256 value) public view returns (uint256) {
+    function USDCtoChicksNoTrade(uint256 value) public view returns (uint256) {
         uint256 backing = getBacking();
         return Math.mulDiv(value, totalSupply(), backing);
     }
 
     function sendUSDC(address _address, uint256 _value) internal {
-        IERC20(USDC_TOKEN).safeTransfer(_address, _value);
+        usdcToken.safeTransfer(_address, _value);
         emit SendUSDC(_address, _value);
     }
 
     //utils
-    function getBuyChicks(uint256 amount) external view returns (uint256) {
+    function getBuyEggs(uint256 amount) external view returns (uint256) {
         return
             (amount * (totalSupply()) * (buy_fee)) /
             (getBacking()) /
             (FEE_BASE_1000);
     }
+
+    receive() external payable {}
+
+    fallback() external payable {}
 }
