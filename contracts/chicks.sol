@@ -124,7 +124,7 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
 
         require(receiver != address(0x0), "Reciever cannot be 0x0 address");
 
-        // Mint Eggs to sender
+        // Mint CHICKS to sender
         // AUDIT: to user round down
         uint256 chicks = USDCtoChicks(_usdcAmount);
         
@@ -311,7 +311,7 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         } else {
             requireCollateralFromUser =
                 requireCollateralFromUser -
-                userExcessInEggs;
+                userExcessInChicks;
         }
 
         uint256 feeAddressFee = (usdcFee * 3) / 10;
@@ -556,7 +556,7 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         return buy_fee;
     }
 
-    // Buy Eggs
+    // Buy CHICKS
 
     function getTotalBorrowed() public view returns (uint256) {
         return totalBorrowed;
@@ -575,7 +575,7 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         uint256 _totalColateral = balanceOf(address(this));
         require(
             _totalColateral >= totalCollateral,
-            "The eggs balance of the contract must be greater than or equal to the collateral"
+            "The CHICKS balance of the contract must be greater than or equal to the collateral"
         );
         require(lastPrice <= newPrice, "The price of chicks cannot decrease");
         lastPrice = newPrice;
@@ -615,7 +615,7 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
     }
 
     //utils
-    function getBuyEggs(uint256 amount) external view returns (uint256) {
+    function getBuyChicks(uint256 amount) external view returns (uint256) {
         return
             (amount * (totalSupply()) * (buy_fee)) /
             (getBacking()) /
@@ -623,6 +623,5 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
     }
 
     receive() external payable {}
-
-    fallback() external payable {}
+ 
 }

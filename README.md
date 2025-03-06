@@ -1,10 +1,10 @@
-# EggsToChicks Smart Contract Project
+# USDCtoCHICKS Smart Contract Project
 
 A decentralized finance (DeFi) project that implements a token basket system using smart contracts on the Ethereum blockchain. This project is part of the BTB Finance ecosystem.
 
 ## Overview
 
-EggsToChicks is a smart contract system that allows users to interact with token baskets in a decentralized manner. The project implements ERC20 standards and includes features for token management and basket operations.
+USDCtoCHICKS is a smart contract system that allows users to interact with token baskets in a decentralized manner. The project implements ERC20 standards and includes features for token management and basket operations.
 
 ## Prerequisites
 
