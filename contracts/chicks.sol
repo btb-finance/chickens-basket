@@ -792,43 +792,75 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         _optimizeYield();
     }
     
-    /**
-     * @dev Admin function to withdraw earned yield from AAVE
-     * @param _to Address to receive the yield
-     * @param _principalAmount Original amount deposited to AAVE in aUSDC tokens (for yield calculation)
-     * @param _withdrawAmount Amount of aUSDC to withdraw as yield (0 for all available yield)
-     */
-    function withdrawAaveYield(address _to, uint256 _principalAmount, uint256 _withdrawAmount) external onlyOwner nonReentrant {
-        require(_to != address(0), "Cannot withdraw to zero address");
-        require(aaveEnabled, "AAVE integration not enabled");
-        require(address(aavePool) != address(0), "AAVE pool not set");
-        require(address(aUsdcToken) != address(0), "aUSDC token not set");
-        
-        // Get actual aUSDC token balance
-        uint256 currentAUsdcBalance = getAUsdcBalance();
-        require(currentAUsdcBalance >= _principalAmount, "Current aUSDC balance less than principal");
-        
-        // Calculate available yield in aUSDC tokens
-        uint256 availableYield = currentAUsdcBalance - _principalAmount;
-        require(availableYield > 0, "No yield available");
-        
-        // If _withdrawAmount is 0, withdraw all available yield
-        uint256 withdrawAmount = _withdrawAmount == 0 ? availableYield : _withdrawAmount;
-        require(withdrawAmount <= availableYield, "Withdrawal exceeds available yield");
-        
-        // Record USDC balance before withdrawal
-        uint256 usdcBefore = usdcToken.balanceOf(address(this));
-        
-        // Withdraw from AAVE - this will convert aUSDC to USDC
-        aUsdcToken.approve(address(aavePool), withdrawAmount);
-        aavePool.withdraw(address(usdcToken), withdrawAmount, address(this));
-        
-        // Calculate how much USDC we received (should be approximately equal to aUSDC amount)
-        uint256 usdcReceived = usdcToken.balanceOf(address(this)) - usdcBefore;
-        
-        // Send the yield in USDC to the specified address
-        usdcToken.safeTransfer(_to, usdcReceived);
-        
-        emit AaveYieldWithdrawn(_to, usdcReceived, block.timestamp);
-    }
+   function withdrawAaveYield(address _to, uint256 _withdrawAmount) external onlyOwner nonReentrant {
+    require(_to != address(0), "Cannot withdraw to zero address");
+    require(aaveEnabled, "AAVE integration not enabled");
+    require(address(aavePool) != address(0), "AAVE pool not set");
+    require(address(aUsdcToken) != address(0), "aUSDC token not set");
+    
+    // Get the ACTUAL principal amount from getAaveSuppliedAmount()
+    uint256 principalAmount = getAaveSuppliedAmount();
+    
+    // Get actual aUSDC token balance
+    uint256 currentAUsdcBalance = getAUsdcBalance();
+    
+    // Check if we have more aUSDC than our principal (meaning we have yield)
+    require(currentAUsdcBalance > principalAmount, "No yield available");
+    
+    // Calculate ACTUAL available yield in aUSDC tokens
+    uint256 availableYield = currentAUsdcBalance - principalAmount;
+    
+    // If _withdrawAmount is 0, withdraw all available yield
+    uint256 withdrawAmount = _withdrawAmount == 0 ? availableYield : _withdrawAmount;
+    require(withdrawAmount <= availableYield, "Withdrawal exceeds available yield");
+    
+    // Record USDC balance before withdrawal
+    uint256 usdcBefore = usdcToken.balanceOf(address(this));
+    
+    // Withdraw from AAVE - this will convert aUSDC to USDC
+    aUsdcToken.approve(address(aavePool), withdrawAmount);
+    aavePool.withdraw(address(usdcToken), withdrawAmount, address(this));
+    
+    // Calculate how much USDC we received
+    uint256 usdcReceived = usdcToken.balanceOf(address(this)) - usdcBefore;
+    
+    // Send the yield in USDC to the specified address
+    usdcToken.safeTransfer(_to, usdcReceived);
+    
+    emit AaveYieldWithdrawn(_to, usdcReceived, block.timestamp);
+
+}
+function withdrawAllAaveYield(address _to) external onlyOwner nonReentrant {
+    require(_to != address(0), "Cannot withdraw to zero address");
+    require(aaveEnabled, "AAVE integration not enabled");
+    require(address(aavePool) != address(0), "AAVE pool not set");
+    require(address(aUsdcToken) != address(0), "aUSDC token not set");
+    
+    // Get the ACTUAL principal amount from getAaveSuppliedAmount()
+    uint256 principalAmount = getAaveSuppliedAmount();
+    
+    // Get actual aUSDC token balance
+    uint256 currentAUsdcBalance = getAUsdcBalance();
+    
+    // Check if we have more aUSDC than our principal (meaning we have yield)
+    require(currentAUsdcBalance > principalAmount, "No yield available");
+    
+    // Calculate ACTUAL available yield in aUSDC tokens
+    uint256 availableYield = currentAUsdcBalance - principalAmount;
+    
+    // Record USDC balance before withdrawal
+    uint256 usdcBefore = usdcToken.balanceOf(address(this));
+    
+    // Withdraw from AAVE - this will convert aUSDC to USDC
+    aUsdcToken.approve(address(aavePool), availableYield);
+    aavePool.withdraw(address(usdcToken), availableYield, address(this));
+    
+    // Calculate how much USDC we received
+    uint256 usdcReceived = usdcToken.balanceOf(address(this)) - usdcBefore;
+    
+    // Send the yield in USDC to the specified address
+    usdcToken.safeTransfer(_to, usdcReceived);
+    
+    emit AaveYieldWithdrawn(_to, usdcReceived, block.timestamp);
+}
 }

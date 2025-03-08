@@ -10,7 +10,7 @@ async function main() {
   // Deploy the contract with constructor arguments
   console.log("Deploying CHICKS token...");
   const chicks = await CHICKS.deploy(
-    process.env.usdc_address         // USDC token address
+    process.env.USDC_ADDRESS         // USDC token address
   );
   
   // Wait for deployment to finish
@@ -48,7 +48,7 @@ async function main() {
     await hre.run("verify:verify", {
       address: chicksAddress,
       constructorArguments: [
-        process.env.usdc_address
+        process.env.USDC_ADDRESS
       ],
     });
     console.log("Contract verified on Etherscan");
