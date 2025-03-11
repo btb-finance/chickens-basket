@@ -251,13 +251,11 @@ contract CHICKS is ERC20Burnable, ERC20Permit, Ownable2Step, ReentrancyGuard {
         safetyCheck(usdc);
     }
 
-    function getInterestFee(
-        uint256 amount,
-        uint256 numberOfDays
-    ) public pure returns (uint256) {
-        uint256 interest = Math.mulDiv(0.039e6, numberOfDays, 365) + 0.001e6;
-        return Math.mulDiv(amount, interest, 1e18);
-    }
+    function getInterestFee(uint256 amount, uint256 numberOfDays) public pure returns (uint256) {
+    uint256 interest = Math.mulDiv(39000, numberOfDays, 365) + 1000;
+    return Math.mulDiv(amount, interest, 1e6);
+}
+
 
     function borrow(uint256 usdc, uint256 numberOfDays) public nonReentrant {
         require(
@@ -779,10 +777,11 @@ contract CHICKS is ERC20Burnable, ERC20Permit, Ownable2Step, ReentrancyGuard {
         uint256 balance = usdcToken.balanceOf(address(this));
         uint256 excessLiquidity = 0;
         
-        // Calculate excess liquidity (anything above buffer + 1% of totalBorrowed for safety)
-        if (balance > minLiquidityBuffer + (totalBorrowed / 1)) {
-            excessLiquidity = balance - minLiquidityBuffer - (totalBorrowed / 10);
-        }
+        // Calculate excess liquidity (anything above buffer)
+       if (balance > minLiquidityBuffer) {
+    excessLiquidity = balance - minLiquidityBuffer;
+}
+
         
         // Supply excess liquidity to AAVE if it's significant
         if (excessLiquidity > MIN * 10) {
