@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
+import "@aave/core-v3/contracts/interfaces/IPool.sol";
 
 contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -14,6 +15,12 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
     // USDC token address
     IERC20 public usdcToken;
     address payable public FEE_ADDRESS;
+    
+    // AAVE integration
+    IPool public aavePool;
+    bool public aaveEnabled = false;
+    uint256 public minLiquidityBuffer; // Minimum amount of USDC to keep in contract
+    IERC20 public aUsdcToken; // aUSDC token from AAVE (interest-bearing token)
 
     uint256 private constant MIN = 1000;
 
@@ -63,10 +70,16 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         uint256 totalCollateral
     );
     event SendUSDC(address to, uint256 amount);
+    event AaveSupply(uint256 amount, uint256 timestamp);
+    event AaveWithdraw(uint256 amount, uint256 timestamp);
+    event AaveEnabled(bool enabled);
+    event MinLiquidityBufferUpdated(uint256 amount);
+    event AaveYieldWithdrawn(address to, uint256 amount, uint256 timestamp);
 
     constructor(address _usdcToken) ERC20("CHICKS", "CHICKS") Ownable(msg.sender) {
         usdcToken = IERC20(_usdcToken);
         lastLiquidationDate = getMidnightTimestamp(block.timestamp);
+        minLiquidityBuffer = 1000 * 10**6; // Default 1000 USDC as buffer
     }
     function setStart(uint256 _usdcAmount) public onlyOwner {
         require(FEE_ADDRESS != address(0x0), "Must set fee address");
@@ -567,7 +580,7 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
     }
 
     function getBacking() public view returns (uint256) {
-        return usdcToken.balanceOf(address(this)) + getTotalBorrowed();
+        return usdcToken.balanceOf(address(this)) + getTotalBorrowed() + getAaveSuppliedAmount();
     }
 
     function safetyCheck(uint256 usdc) private {
@@ -580,6 +593,9 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
         require(lastPrice <= newPrice, "The price of chicks cannot decrease");
         lastPrice = newPrice;
         emit Price(block.timestamp, newPrice, usdc);
+        
+        // After each operation, check if we can deposit to AAVE
+        _optimizeYield();
     }
 
     function ChicksToUSDC(uint256 value) public view returns (uint256) {
@@ -610,6 +626,14 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
     }
 
     function sendUSDC(address _address, uint256 _value) internal {
+        uint256 contractBalance = usdcToken.balanceOf(address(this));
+        
+        // If we don't have enough USDC in the contract but have deposits in AAVE
+        if (contractBalance < _value && aaveEnabled && getAaveSuppliedAmount() > 0) {
+            uint256 amountToWithdraw = _value - contractBalance;
+            _withdrawFromAave(amountToWithdraw);
+        }
+        
         usdcToken.safeTransfer(_address, _value);
         emit SendUSDC(_address, _value);
     }
@@ -623,5 +647,220 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
     }
 
     receive() external payable {}
- 
+
+    // ======== AAVE Integration Functions ========
+    
+    /**
+     * @dev Set the AAVE pool address
+     * @param _aavePool AAVE pool address
+     */
+    function setAavePool(address _aavePool) external onlyOwner {
+        require(_aavePool != address(0), "Invalid AAVE pool address");
+        aavePool = IPool(_aavePool);
+    }
+    
+    /**
+     * @dev Set the aUSDC token address
+     * @param _aUsdcToken aUSDC token address
+     */
+    function setAUsdcToken(address _aUsdcToken) external onlyOwner {
+        require(_aUsdcToken != address(0), "Invalid aUSDC token address");
+        aUsdcToken = IERC20(_aUsdcToken);
+    }
+    
+    /**
+     * @dev Enable or disable AAVE integration
+     * @param _enabled Whether AAVE integration is enabled
+     */
+    function setAaveEnabled(bool _enabled) external onlyOwner {
+        aaveEnabled = _enabled;
+        emit AaveEnabled(_enabled);
+    }
+    
+    /**
+     * @dev Set the minimum USDC liquidity buffer
+     * @param _minLiquidityBuffer Minimum amount of USDC to keep in contract
+     */
+    function setMinLiquidityBuffer(uint256 _minLiquidityBuffer) external onlyOwner {
+        minLiquidityBuffer = _minLiquidityBuffer;
+        emit MinLiquidityBufferUpdated(_minLiquidityBuffer);
+    }
+    
+    /**
+     * @dev Get amount of USDC supplied to AAVE
+     * @return uint256 Amount of USDC supplied to AAVE
+     */
+    function getAaveSuppliedAmount() public view returns (uint256) {
+        if (!aaveEnabled || address(aavePool) == address(0)) {
+            return 0;
+        }
+        
+        (uint256 aaveCollateral, , , , , ) = aavePool.getUserAccountData(address(this));
+        return aaveCollateral;
+    }
+    
+    /**
+     * @dev Get the current aUSDC token balance (directly from the token)
+     * @return uint256 Current aUSDC token balance
+     */
+    function getAUsdcBalance() public view returns (uint256) {
+        if (!aaveEnabled || address(aUsdcToken) == address(0)) {
+            return 0;
+        }
+        
+        return aUsdcToken.balanceOf(address(this));
+    }
+    
+    /**
+     * @dev Supply USDC to AAVE to earn yield
+     * @param _amount Amount of USDC to supply
+     */
+    function supplyToAave(uint256 _amount) external onlyOwner {
+        _supplyToAave(_amount);
+    }
+    
+    /**
+     * @dev Withdraw USDC from AAVE
+     * @param _amount Amount of USDC to withdraw
+     */
+    function withdrawFromAave(uint256 _amount) external onlyOwner {
+        _withdrawFromAave(_amount);
+    }
+    
+    /**
+     * @dev Internal function to supply USDC to AAVE
+     * @param _amount Amount of USDC to supply
+     */
+    function _supplyToAave(uint256 _amount) internal {
+        require(aaveEnabled, "AAVE integration not enabled");
+        require(address(aavePool) != address(0), "AAVE pool not set");
+        require(_amount > 0, "Amount must be greater than 0");
+        
+        uint256 balance = usdcToken.balanceOf(address(this));
+        require(balance >= _amount + minLiquidityBuffer, "Insufficient balance or would go below buffer");
+        
+        // Approve AAVE pool to spend USDC
+        usdcToken.approve(address(aavePool), _amount);
+        
+        // Supply to AAVE
+        aavePool.supply(address(usdcToken), _amount, address(this), 0);
+        
+        emit AaveSupply(_amount, block.timestamp);
+    }
+    
+    /**
+     * @dev Internal function to withdraw USDC from AAVE
+     * @param _amount Amount of USDC to withdraw
+     */
+    function _withdrawFromAave(uint256 _amount) internal {
+        require(aaveEnabled, "AAVE integration not enabled");
+        require(address(aavePool) != address(0), "AAVE pool not set");
+        require(_amount > 0, "Amount must be greater than 0");
+        
+        // Withdraw from AAVE
+        aavePool.withdraw(address(usdcToken), _amount, address(this));
+        
+        emit AaveWithdraw(_amount, block.timestamp);
+    }
+    
+    /**
+     * @dev Automatically optimize yield by supplying excess USDC to AAVE
+     */
+    function _optimizeYield() internal {
+        if (!aaveEnabled || address(aavePool) == address(0)) {
+            return;
+        }
+        
+        uint256 balance = usdcToken.balanceOf(address(this));
+        uint256 excessLiquidity = 0;
+        
+        // Calculate excess liquidity (anything above buffer + 1% of totalBorrowed for safety)
+        if (balance > minLiquidityBuffer + (totalBorrowed / 1)) {
+            excessLiquidity = balance - minLiquidityBuffer - (totalBorrowed / 10);
+        }
+        
+        // Supply excess liquidity to AAVE if it's significant
+        if (excessLiquidity > MIN * 10) {
+            _supplyToAave(excessLiquidity);
+        }
+    }
+    
+    /**
+     * @dev Force optimization of yield (can be called by owner)
+     */
+    function optimizeYield() external onlyOwner {
+        _optimizeYield();
+    }
+    
+   function withdrawAaveYield(address _to, uint256 _withdrawAmount) external onlyOwner nonReentrant {
+    require(_to != address(0), "Cannot withdraw to zero address");
+    require(aaveEnabled, "AAVE integration not enabled");
+    require(address(aavePool) != address(0), "AAVE pool not set");
+    require(address(aUsdcToken) != address(0), "aUSDC token not set");
+    
+    // Get the ACTUAL principal amount from getAaveSuppliedAmount()
+    uint256 principalAmount = getAaveSuppliedAmount();
+    
+    // Get actual aUSDC token balance
+    uint256 currentAUsdcBalance = getAUsdcBalance();
+    
+    // Check if we have more aUSDC than our principal (meaning we have yield)
+    require(currentAUsdcBalance > principalAmount, "No yield available");
+    
+    // Calculate ACTUAL available yield in aUSDC tokens
+    uint256 availableYield = currentAUsdcBalance - principalAmount;
+    
+    // If _withdrawAmount is 0, withdraw all available yield
+    uint256 withdrawAmount = _withdrawAmount == 0 ? availableYield : _withdrawAmount;
+    require(withdrawAmount <= availableYield, "Withdrawal exceeds available yield");
+    
+    // Record USDC balance before withdrawal
+    uint256 usdcBefore = usdcToken.balanceOf(address(this));
+    
+    // Withdraw from AAVE - this will convert aUSDC to USDC
+    aUsdcToken.approve(address(aavePool), withdrawAmount);
+    aavePool.withdraw(address(usdcToken), withdrawAmount, address(this));
+    
+    // Calculate how much USDC we received
+    uint256 usdcReceived = usdcToken.balanceOf(address(this)) - usdcBefore;
+    
+    // Send the yield in USDC to the specified address
+    usdcToken.safeTransfer(_to, usdcReceived);
+    
+    emit AaveYieldWithdrawn(_to, usdcReceived, block.timestamp);
+
+}
+function withdrawAllAaveYield(address _to) external onlyOwner nonReentrant {
+    require(_to != address(0), "Cannot withdraw to zero address");
+    require(aaveEnabled, "AAVE integration not enabled");
+    require(address(aavePool) != address(0), "AAVE pool not set");
+    require(address(aUsdcToken) != address(0), "aUSDC token not set");
+    
+    // Get the ACTUAL principal amount from getAaveSuppliedAmount()
+    uint256 principalAmount = getAaveSuppliedAmount();
+    
+    // Get actual aUSDC token balance
+    uint256 currentAUsdcBalance = getAUsdcBalance();
+    
+    // Check if we have more aUSDC than our principal (meaning we have yield)
+    require(currentAUsdcBalance > principalAmount, "No yield available");
+    
+    // Calculate ACTUAL available yield in aUSDC tokens
+    uint256 availableYield = currentAUsdcBalance - principalAmount;
+    
+    // Record USDC balance before withdrawal
+    uint256 usdcBefore = usdcToken.balanceOf(address(this));
+    
+    // Withdraw from AAVE - this will convert aUSDC to USDC
+    aUsdcToken.approve(address(aavePool), availableYield);
+    aavePool.withdraw(address(usdcToken), availableYield, address(this));
+    
+    // Calculate how much USDC we received
+    uint256 usdcReceived = usdcToken.balanceOf(address(this)) - usdcBefore;
+    
+    // Send the yield in USDC to the specified address
+    usdcToken.safeTransfer(_to, usdcReceived);
+    
+    emit AaveYieldWithdrawn(_to, usdcReceived, block.timestamp);
+}
 }
