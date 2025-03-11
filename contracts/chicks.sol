@@ -4,12 +4,13 @@ pragma solidity 0.8.28;
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@aave/core-v3/contracts/interfaces/IPool.sol";
 
-contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
+contract CHICKS is ERC20Burnable, ERC20Permit, Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
     
     // USDC token address
@@ -39,7 +40,7 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
     uint256 private totalBorrowed = 0;
     uint256 private totalCollateral = 0;
 
-    uint128 public constant maxSupply = 10e28;
+    uint128 public constant maxSupply = 10 * 10 ** 6; 
     uint256 public totalMinted;
     uint256 public lastPrice = 0;
 
@@ -76,7 +77,7 @@ contract CHICKS is ERC20Burnable, Ownable2Step, ReentrancyGuard {
     event MinLiquidityBufferUpdated(uint256 amount);
     event AaveYieldWithdrawn(address to, uint256 amount, uint256 timestamp);
 
-    constructor(address _usdcToken) ERC20("CHICKS", "CHICKS") Ownable(msg.sender) {
+    constructor(address _usdcToken) ERC20("CHICKS", "CHICKS") ERC20Permit("CHICKS") Ownable(msg.sender) {
         usdcToken = IERC20(_usdcToken);
         lastLiquidationDate = getMidnightTimestamp(block.timestamp);
         minLiquidityBuffer = 1000 * 10**6; // Default 1000 USDC as buffer
