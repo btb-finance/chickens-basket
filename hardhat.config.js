@@ -12,13 +12,14 @@ module.exports = {
     }
   },
   networks: {
+    hardhat: {},
     sepolia: {
-      url: process.env.rpc_url,
-      accounts: [process.env.private_key],
-      chainId: parseInt(process.env.chain_id)
+      url: process.env.rpc_url || "https://eth-sepolia.g.alchemy.com/v2/demo",
+      accounts: process.env.private_key ? [process.env.private_key] : [],
+      chainId: process.env.chain_id ? parseInt(process.env.chain_id) : 11155111
     }
   },
   etherscan: {
-    apiKey: process.env.ethscan_api_key
+    apiKey: process.env.ethscan_api_key || ""
   }
 };

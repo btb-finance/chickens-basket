@@ -40,7 +40,7 @@ contract CHICKS is ERC20Burnable, ERC20Permit, Ownable2Step, ReentrancyGuard {
     uint256 private totalBorrowed = 0;
     uint256 private totalCollateral = 0;
 
-    uint128 public constant maxSupply = 10 * 10 ** 6; 
+    uint128 public constant maxSupply = 100 * 10 ** 9 * 10 ** 6; // 100 billion tokens with 6 decimals
     uint256 public totalMinted;
     uint256 public lastPrice = 0;
 
@@ -103,6 +103,10 @@ contract CHICKS is ERC20Burnable, ERC20Permit, Ownable2Step, ReentrancyGuard {
         require(totalMinted <= maxSupply, "NO MORE CHICKS");
 
         _mint(to, value);
+    }
+
+    function decimals() public view virtual override returns (uint8) {
+        return 6;
     }
 
     function setFeeAddress(address _address) external onlyOwner {
