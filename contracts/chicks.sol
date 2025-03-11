@@ -605,9 +605,9 @@ contract CHICKS is ERC20Burnable, ERC20Permit, Ownable2Step, ReentrancyGuard {
         return Math.mulDiv(value, getBacking(), totalSupply());
     }
 
-    function USDCtoChicks(uint256 value) public view returns (uint256) {
-        return Math.mulDiv(value, totalSupply(), getBacking() - value);
-    }
+   function USDCtoChicks(uint256 value) public view returns (uint256) {
+    return Math.mulDiv(value, totalSupply(), getBacking());
+}
 
     function USDCtoChicksLev(
         uint256 value,
