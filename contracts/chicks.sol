@@ -9,7 +9,7 @@ import "@openzeppelin/contracts/access/Ownable2Step.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@aave/core-v3/contracts/interfaces/IPool.sol";
-import "@aave/core-v3/contracts/interfaces/DataTypes.sol";
+import "@aave/core-v3/contracts/protocol/libraries/types/DataTypes.sol";
 
 contract CHICKS is ERC20Burnable, ERC20Permit, Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -110,7 +110,7 @@ contract CHICKS is ERC20Burnable, ERC20Permit, Ownable2Step, ReentrancyGuard {
         return 6;
     }
 
-    function setFeeAddress(address _address) external onlyOwner {
+    function setFeeAddress(address _address) external onlyOwner nonReentrant {
         require(
             _address != address(0x0),
             "Can't set fee address to 0x0 address"
@@ -699,9 +699,8 @@ contract CHICKS is ERC20Burnable, ERC20Permit, Ownable2Step, ReentrancyGuard {
             return 0;
         }
         
-        // Instead of using getUserAccountData which returns collateral in ETH equivalent,
-        // we need to use the actual aUSDC token balance which represents our USDC supply
-        return aUsdcToken.balanceOf(address(this));
+        // Return the tracked principal amount instead of the current balance
+        return aaveUsdcPrincipal;
     }
     
     /**
@@ -714,6 +713,23 @@ contract CHICKS is ERC20Burnable, ERC20Permit, Ownable2Step, ReentrancyGuard {
         }
         
         return aUsdcToken.balanceOf(address(this));
+    }
+    
+    /**
+     * @dev Get the yield from AAVE
+     * @return uint256 Yield from AAVE
+     */
+    function getAaveYield() public view returns (uint256) {
+        if (!aaveEnabled || address(aavePool) == address(0) || address(aUsdcToken) == address(0)) {
+            return 0;
+        }
+        
+        uint256 currentAUsdcBalance = aUsdcToken.balanceOf(address(this));
+        if (currentAUsdcBalance <= aaveUsdcPrincipal) {
+            return 0;
+        }
+        
+        return currentAUsdcBalance - aaveUsdcPrincipal;
     }
     
     /**
@@ -750,6 +766,9 @@ contract CHICKS is ERC20Burnable, ERC20Permit, Ownable2Step, ReentrancyGuard {
         // Supply to AAVE
         aavePool.supply(address(usdcToken), _amount, address(this), 0);
         
+        // Update the principal amount tracked in AAVE
+        aaveUsdcPrincipal += _amount;
+        
         emit AaveSupply(_amount, block.timestamp);
     }
     
@@ -764,6 +783,13 @@ contract CHICKS is ERC20Burnable, ERC20Permit, Ownable2Step, ReentrancyGuard {
         
         // Withdraw from AAVE
         aavePool.withdraw(address(usdcToken), _amount, address(this));
+        
+        // Update the principal amount, ensuring it never goes below zero
+        if (_amount >= aaveUsdcPrincipal) {
+            aaveUsdcPrincipal = 0;
+        } else {
+            aaveUsdcPrincipal -= _amount;
+        }
         
         emit AaveWithdraw(_amount, block.timestamp);
     }
@@ -804,17 +830,9 @@ contract CHICKS is ERC20Burnable, ERC20Permit, Ownable2Step, ReentrancyGuard {
     require(address(aavePool) != address(0), "AAVE pool not set");
     require(address(aUsdcToken) != address(0), "aUSDC token not set");
     
-    // Get the ACTUAL principal amount from getAaveSuppliedAmount()
-    uint256 principalAmount = getAaveSuppliedAmount();
-    
-    // Get actual aUSDC token balance
-    uint256 currentAUsdcBalance = getAUsdcBalance();
-    
-    // Check if we have more aUSDC than our principal (meaning we have yield)
-    require(currentAUsdcBalance > principalAmount, "No yield available");
-    
-    // Calculate ACTUAL available yield in aUSDC tokens
-    uint256 availableYield = currentAUsdcBalance - principalAmount;
+    // Get available yield using the new function
+    uint256 availableYield = getAaveYield();
+    require(availableYield > 0, "No yield available");
     
     // If _withdrawAmount is 0, withdraw all available yield
     uint256 withdrawAmount = _withdrawAmount == 0 ? availableYield : _withdrawAmount;
@@ -834,25 +852,17 @@ contract CHICKS is ERC20Burnable, ERC20Permit, Ownable2Step, ReentrancyGuard {
     usdcToken.safeTransfer(_to, usdcReceived);
     
     emit AaveYieldWithdrawn(_to, usdcReceived, block.timestamp);
-
 }
+
 function withdrawAllAaveYield(address _to) external onlyOwner nonReentrant {
     require(_to != address(0), "Cannot withdraw to zero address");
     require(aaveEnabled, "AAVE integration not enabled");
     require(address(aavePool) != address(0), "AAVE pool not set");
     require(address(aUsdcToken) != address(0), "aUSDC token not set");
     
-    // Get the ACTUAL principal amount from getAaveSuppliedAmount()
-    uint256 principalAmount = getAaveSuppliedAmount();
-    
-    // Get actual aUSDC token balance
-    uint256 currentAUsdcBalance = getAUsdcBalance();
-    
-    // Check if we have more aUSDC than our principal (meaning we have yield)
-    require(currentAUsdcBalance > principalAmount, "No yield available");
-    
-    // Calculate ACTUAL available yield in aUSDC tokens
-    uint256 availableYield = currentAUsdcBalance - principalAmount;
+    // Get available yield using the new function
+    uint256 availableYield = getAaveYield();
+    require(availableYield > 0, "No yield available");
     
     // Record USDC balance before withdrawal
     uint256 usdcBefore = usdcToken.balanceOf(address(this));

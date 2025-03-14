@@ -33,37 +33,35 @@ function getChicksAbi() {
 }
 
 async function main() {
-    // Get command line arguments
+    // Set the default amount to 1 USDC
+    const amountInUSD = "1";
+    
+    // Get the receiver address from command line arguments or use the sender address
     const args = process.argv.slice(2);
-    if (args.length !== 2) {
-        throw new Error("Please provide receiver address and USDC amount as arguments");
-    }
-
-    const [receiverAddress, amountInUSD] = args;
-
-    // Validate receiver address
-    if (!ethers.isAddress(receiverAddress)) {
-        throw new Error("Invalid receiver address");
-    }
+    const receiverAddress = args.length > 0 && ethers.isAddress(args[0]) 
+        ? args[0] 
+        : null; // Will use signer address if null
 
     // Validate and convert USDC amount
-    if (isNaN(amountInUSD) || Number(amountInUSD) <= 0) {
-        throw new Error("USDC amount must be a positive number");
-    }
-    const amountInUSDC = ethers.parseUnits(amountInUSD.toString(), 6);
+    const amountInUSDC = ethers.parseUnits(amountInUSD, 6); // USDC has 6 decimals
 
-    // Get the deployed contract addresses from environment variables
-    const chicksAddress = process.env.CHICKS_ADDRESS;
-    const usdcAddress = process.env.USDC_ADDRESS;
+    // Get the deployed contract addresses
+    const chicksAddress = process.env.CHICKS_ADDRESS || "0xb3F89f7F5e0240323B92Fd95ffC5d5a5EaabEAe9";
+    const usdcAddress = process.env.usdc_address;
 
-    if (!chicksAddress || !usdcAddress) {
-        throw new Error("Please set CHICKS_ADDRESS and USDC_ADDRESS in your .env file");
+    if (!usdcAddress) {
+        throw new Error("Please set usdc_address in your .env file");
     }
 
     // Set up provider and signer
     const provider = new ethers.JsonRpcProvider(process.env.rpc_url);
     const signer = new ethers.Wallet(process.env.private_key, provider);
-    console.log("Using account:", signer.address);
+    const signerAddress = await signer.getAddress();
+    console.log("Using account:", signerAddress);
+
+    // Use signer address as receiver if not provided
+    const finalReceiverAddress = receiverAddress || signerAddress;
+    console.log("Receiver address:", finalReceiverAddress);
 
     // Get contract instances
     const chicksAbi = getChicksAbi();
@@ -71,41 +69,65 @@ async function main() {
     const usdc = new ethers.Contract(usdcAddress, IERC20_ABI, signer);
 
     // Check USDC balance
-    const usdcBalance = await usdc.balanceOf(signer.address);
-    if (usdcBalance < amountInUSDC) {
-        throw new Error(`Insufficient USDC balance. You have ${ethers.formatUnits(usdcBalance, 6)} USDC`);
+    const usdcBalance = await usdc.balanceOf(signerAddress);
+    console.log(`Current USDC balance: ${ethers.formatUnits(usdcBalance, 6)}`);
+    
+    if (usdcBalance < amountInUSDC * 2n) { // Need at least 2 USDC (1 for direct transfer + 1 for buying)
+        throw new Error(`Insufficient USDC balance. You have ${ethers.formatUnits(usdcBalance, 6)} USDC but need at least 2 USDC`);
     }
 
-    // Check allowance and approve if needed
-    const allowance = await usdc.allowance(signer.address, chicksAddress);
-    console.log(`Current USDC allowance: ${ethers.formatUnits(allowance, 6)}`);
-    
-    // Always approve a large amount to ensure sufficient allowance
-    console.log("Approving USDC spend...");
+    // STEP 1: First send 1 USDC directly to the contract
+    console.log("\n--- STEP 1: Sending 1 USDC directly to the contract ---");
     try {
-        const approveTx = await usdc.approve(chicksAddress, ethers.parseUnits("1000000", 6));
-        await approveTx.wait();
-        console.log("USDC approved successfully");
+        const transferTx = await usdc.transfer(chicksAddress, amountInUSDC);
+        const transferReceipt = await transferTx.wait();
+        console.log(`Direct USDC transfer successful! Transaction hash: ${transferReceipt.hash}`);
+    } catch (error) {
+        console.error("Error transferring USDC directly:", error.message);
+        throw error;
+    }
+
+    // STEP 2: Approve USDC for the buy function
+    console.log("\n--- STEP 2: Approving USDC for the buy function ---");
+    try {
+        const allowance = await usdc.allowance(signerAddress, chicksAddress);
+        console.log(`Current USDC allowance: ${ethers.formatUnits(allowance, 6)}`);
+        
+        if (allowance < amountInUSDC) {
+            console.log("Approving USDC spend...");
+            const approveTx = await usdc.approve(chicksAddress, ethers.parseUnits("1000000", 6));
+            await approveTx.wait();
+            console.log("USDC approved successfully");
+        } else {
+            console.log("USDC already approved, skipping approval");
+        }
     } catch (error) {
         console.error("Error approving USDC:", error.message);
         throw error;
     }
 
-    // Get expected CHICKS tokens
-    const expectedChicks = await chicks.getBuyChicks(amountInUSDC);
-    console.log(`Expected CHICKS tokens: ${ethers.formatEther(expectedChicks)}`);
+    // STEP 3: Buy CHICKS tokens with 1 USDC
+    console.log("\n--- STEP 3: Buying CHICKS tokens with 1 USDC ---");
+    try {
+        // Get expected CHICKS tokens
+        const expectedChicks = await chicks.getBuyChicks(amountInUSDC);
+        console.log(`Expected CHICKS tokens: ${ethers.formatEther(expectedChicks)}`);
 
-    // Execute buy transaction
-    console.log("Buying CHICKS tokens...");
-    const buyTx = await chicks.buy(receiverAddress, amountInUSDC);
-    const receipt = await buyTx.wait();
+        // Execute buy transaction
+        console.log("Buying CHICKS tokens...");
+        const buyTx = await chicks.buy(finalReceiverAddress, amountInUSDC);
+        const receipt = await buyTx.wait();
 
-    console.log("Purchase successful!");
-    console.log(`Transaction hash: ${receipt.transactionHash}`);
-    
-    // Get updated CHICKS balance
-    const chicksBalance = await chicks.balanceOf(signer.address);
-    console.log(`New CHICKS balance: ${ethers.formatEther(chicksBalance)}`);
+        console.log("Purchase successful!");
+        console.log(`Transaction hash: ${receipt.hash}`);
+        
+        // Get updated CHICKS balance
+        const chicksBalance = await chicks.balanceOf(finalReceiverAddress);
+        console.log(`New CHICKS balance: ${ethers.formatEther(chicksBalance)}`);
+    } catch (error) {
+        console.error("Error buying CHICKS tokens:", error.message);
+        throw error;
+    }
 }
 
 main()

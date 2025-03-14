@@ -10,7 +10,7 @@ async function main() {
   // Deploy the contract with constructor arguments
   console.log("Deploying CHICKS token...");
   const chicks = await CHICKS.deploy(
-    process.env.USDC_ADDRESS         // USDC token address
+    process.env.usdc_address         // USDC token address
   );
   
   // Wait for deployment to finish
@@ -39,22 +39,37 @@ async function main() {
   console.log(`Contract started with initial amount: ${process.env.set_start}`);
   
   // Verify contract on Etherscan if not on a local network
-  if (network.name !== "hardhat" && network.name !== "localhost") {
+  if (hre.network.name !== "hardhat" && hre.network.name !== "localhost") {
     console.log("Proceeding with contract verification...");
     // Add a small delay to ensure the contract is deployed
     await new Promise(resolve => setTimeout(resolve, 30000)); // 30 seconds delay
     
-    console.log("Verifying contract on Etherscan...");
-    await hre.run("verify:verify", {
-      address: chicksAddress,
-      constructorArguments: [
-        process.env.USDC_ADDRESS
-      ],
-    });
-    console.log("Contract verified on Etherscan");
+    console.log("Verifying contract on Blockscout via Sourcify...");
+    try {
+      // Try Sourcify verification first (works better with Blockscout)
+      await hre.run("sourcify", {
+        address: chicksAddress,
+        network: hre.network.name
+      });
+      console.log("Contract verified via Sourcify");
+    } catch (error) {
+      console.log("Sourcify verification failed, trying Etherscan verification...");
+      try {
+        await hre.run("verify:verify", {
+          address: chicksAddress,
+          constructorArguments: [
+            process.env.usdc_address
+          ],
+        });
+        console.log("Contract verified on Etherscan");
+      } catch (verifyError) {
+        console.error("Verification failed:", verifyError);
+      }
+    }
   }
   
   console.log("Deployment and setup complete!");
+  console.log("View your contract on Blockscout: https://base-sepolia.blockscout.com/address/" + chicksAddress);
 }
 
 // We recommend this pattern to be able to use async/await everywhere
