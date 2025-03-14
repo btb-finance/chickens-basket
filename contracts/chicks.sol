@@ -9,6 +9,7 @@ import "@openzeppelin/contracts/access/Ownable2Step.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@aave/core-v3/contracts/interfaces/IPool.sol";
+import "@aave/core-v3/contracts/interfaces/DataTypes.sol";
 
 contract CHICKS is ERC20Burnable, ERC20Permit, Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -22,7 +23,7 @@ contract CHICKS is ERC20Burnable, ERC20Permit, Ownable2Step, ReentrancyGuard {
     bool public aaveEnabled = false;
     uint256 public minLiquidityBuffer; // Minimum amount of USDC to keep in contract
     IERC20 public aUsdcToken; // aUSDC token from AAVE (interest-bearing token)
-
+    uint256 private aaveUsdcPrincipal = 0;
     uint256 private constant MIN = 1000;
 
     uint16 public sell_fee = 975;
@@ -694,12 +695,13 @@ contract CHICKS is ERC20Burnable, ERC20Permit, Ownable2Step, ReentrancyGuard {
      * @return uint256 Amount of USDC supplied to AAVE
      */
     function getAaveSuppliedAmount() public view returns (uint256) {
-        if (!aaveEnabled || address(aavePool) == address(0)) {
+        if (!aaveEnabled || address(aavePool) == address(0) || address(aUsdcToken) == address(0)) {
             return 0;
         }
         
-        (uint256 aaveCollateral, , , , , ) = aavePool.getUserAccountData(address(this));
-        return aaveCollateral;
+        // Instead of using getUserAccountData which returns collateral in ETH equivalent,
+        // we need to use the actual aUSDC token balance which represents our USDC supply
+        return aUsdcToken.balanceOf(address(this));
     }
     
     /**
