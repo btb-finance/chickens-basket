@@ -19,9 +19,14 @@ module.exports = {
       chainId: process.env.chain_id ? parseInt(process.env.chain_id) : 11155111
     },
     base: {
-      url: process.env.rpc_url || "https://base-sepolia.public.blastapi.io",
+      url: process.env.base_rpc_url || "https://mainnet.base.org",
       accounts: process.env.private_key ? [process.env.private_key] : [],
-      chainId: process.env.chain_id ? parseInt(process.env.chain_id) : 84532
+      chainId: 8453
+    },
+    baseSepolia: {
+      url: process.env.base_sepolia_rpc_url || "https://sepolia.base.org",
+      accounts: process.env.private_key ? [process.env.private_key] : [],
+      chainId: 84532
     }
   },
   etherscan: {
