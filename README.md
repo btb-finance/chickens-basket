@@ -68,34 +68,112 @@ ethscan_api_key="YOUR_ETHERSCAN_API_KEY" # For contract verification
 
 1. Start a local Hardhat node:
 ```bash
-npx hardhat node
+pnpm hardhat node
 ```
 
 2. In a new terminal, deploy to local network:
 ```bash
-npx hardhat run scripts/deploy.js --network localhost
+pnpm hardhat run scripts/deploy.js --network localhost
 ```
 
-### Testnet/Mainnet Deployment
+### Base Sepolia Testnet Deployment
 
-1. Ensure your `.env` file is properly configured with all required values.
+1. Ensure your `.env` file is properly configured with all required values:
 
-2. Deploy to your chosen network:
+```env
+# Network Configuration
+rpc_url="https://sepolia.base.org"  # Base Sepolia RPC URL
+private_key="YOUR_PRIVATE_KEY"      # Wallet private key
+chain_id=84532                      # Base Sepolia chain ID
+
+# Contract Configuration
+usdc_address="0x..."                # USDC token contract address on Base Sepolia
+aave_pool_address="0x..."           # AAVE pool address on Base Sepolia
+ausdc_token_address="0x..."         # aUSDC token address on Base Sepolia
+min_liquidity_buffer="1000000"      # Min USDC buffer (in wei)
+fee_address="0x..."                 # Fee recipient address
+set_start="1000000"                 # Initial contract amount
+
+# API Keys
+ethscan_api_key="YOUR_ETHERSCAN_API_KEY" # For contract verification
+```
+
+2. Deploy to Base Sepolia network:
 ```bash
-npx hardhat run scripts/deploy.js --network <network-name>
+pnpm hardhat run scripts/deploy.js --network base
 ```
-Replace `<network-name>` with the desired network (e.g., sepolia, mainnet).
 
-## Contract Verification
+3. For a comprehensive deployment and setup in one step, use the deploy-and-setup.js script:
+```bash
+pnpm hardhat run scripts/deploy-and-setup.js --network base
+```
 
-The deployment script automatically verifies the contract on Etherscan for non-local networks. Ensure you have set the correct `ethscan_api_key` in your `.env` file.
+This script will:
+1. Deploy the CHICKS contract
+2. Verify the contract on Blockscout
+3. Set the minimum liquidity buffer
+4. Set the fee address
+5. Set the start amount
+6. Send 1 USDC to the contract
+7. Approve USDC spending
+8. Buy 1 USDC worth of CHICKS tokens
+9. Set up AAVE integration (pool address, aToken address, and enable AAVE)
+10. Buy 10 USDC worth of CHICKS tokens
 
-## Security
+### Contract Verification
 
-- The contract includes reentrancy protection
-- Uses OpenZeppelin's secure contract implementations
-- Implements two-step ownership transfer
-- Features configurable liquidity buffers
+The deployment script automatically verifies the contract on Blockscout for Base Sepolia. The verification process uses Sourcify for Blockscout compatibility.
+
+## GitHub Workflow
+
+### Creating and Pushing to a New Branch
+
+1. Ensure you have Git installed and configured on your machine.
+
+2. Initialize Git repository (if not already done):
+```bash
+git init
+```
+
+3. Add your files to the staging area:
+```bash
+git add .
+```
+
+4. Commit your changes:
+```bash
+git commit -m "Initial commit with CHICKS contract implementation"
+```
+
+5. Create a new branch for your feature or changes:
+```bash
+git checkout -b feature/base-sepolia-deployment
+```
+
+6. Make your changes and commit them:
+```bash
+git add .
+git commit -m "Deploy CHICKS contract to Base Sepolia"
+```
+
+7. If the repository already exists on GitHub, add it as a remote:
+```bash
+git remote add origin https://github.com/yourusername/chickens-basket.git
+```
+
+8. Push your branch to GitHub:
+```bash
+git push -u origin feature/base-sepolia-deployment
+```
+
+9. Create a Pull Request on GitHub to merge your changes into the main branch.
+
+### Best Practices for Branch Management
+
+- Use descriptive branch names with prefixes like `feature/`, `bugfix/`, or `deployment/`
+- Keep branches focused on a single task or feature
+- Regularly pull changes from the main branch to stay up-to-date
+- Delete branches after they've been merged
 
 ## Using the Scripts
 
