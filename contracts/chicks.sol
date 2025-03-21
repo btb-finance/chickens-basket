@@ -166,7 +166,7 @@ contract CHICKS is ERC20Burnable, ERC20Permit, Ownable2Step, ReentrancyGuard {
         // AUDIT: to user round down
         uint256 usdc = ChicksToUSDC(chicks);
 
-        // Burn of JAY
+        // Burn of CHICKS
         uint256 feeAddressAmount = usdc / FEES_SELL;
         _burn(msg.sender, chicks);
 
