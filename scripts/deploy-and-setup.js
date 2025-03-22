@@ -23,7 +23,7 @@ async function main() {
   const usdcAddress = process.env.usdc_address || "0x5deac602762362fe5f135fa5904351916053cf70"; // Base Sepolia USDC
   const feeAddress = process.env.fee_address || "0x000000000000000000000000000000000000dEaD";
   const minLiquidityBuffer = process.env.min_liquidity_buffer || "1000000"; // 1 USDC with 6 decimals
-  const startAmount = process.env.set_start || "1000000"; // 1 USDC with 6 decimals
+  // Note: setStart() no longer requires an amount parameter as it's hardcoded in the contract
   
   // For AAVE integration (optional)
   const aavePoolAddress = process.env.aave_pool_address;
@@ -54,11 +54,6 @@ async function main() {
   await setMinLiquidityBufferTx.wait();
   console.log(`Minimum liquidity buffer set to: ${minLiquidityBuffer}`);
   
-  console.log("\n--- STEP 4: Setting Start Amount ---");
-  const setStartTx = await chicks.setStart(startAmount);
-  await setStartTx.wait();
-  console.log(`Contract started with initial amount: ${startAmount}`);
-  
   // Get USDC contract instance
   const usdc = new ethers.Contract(usdcAddress, IERC20_ABI, deployer);
   
@@ -72,12 +67,17 @@ async function main() {
     return;
   }
   
-  console.log("\n--- STEP 5: Approving USDC Spending ---");
+  console.log("\n--- STEP 4: Approving USDC Spending ---");
   // Approve a large amount for all future transactions
   const largeApprovalAmount = ethers.parseUnits("1000000", 6); // 1 million USDC
   const approveTx = await usdc.approve(chicksAddress, largeApprovalAmount);
   await approveTx.wait();
   console.log(`USDC approved for spending: ${ethers.formatUnits(largeApprovalAmount, 6)}`);
+  
+  console.log("\n--- STEP 5: Setting Start Amount ---");
+  const setStartTx = await chicks.setStart();
+  await setStartTx.wait();
+  console.log(`Contract started successfully`);
   
   console.log("\n--- STEP 6: Sending 1 USDC to Contract ---");
   // Send 1 USDC to the contract directly

@@ -83,20 +83,33 @@ contract CHICKS is ERC20Burnable, ERC20Permit, Ownable2Step, ReentrancyGuard {
         lastLiquidationDate = getMidnightTimestamp(block.timestamp);
         minLiquidityBuffer = 1000 * 10**6; // Default 1000 USDC as buffer
     }
-    function setStart(uint256 _usdcAmount) public onlyOwner {
-        require(FEE_ADDRESS != address(0x0), "Must set fee address");
-        uint256 teamMint = _usdcAmount * MIN;
-        require(teamMint >= 1 * 10 ** 6);
-        mint(msg.sender, teamMint);
-
-        _transfer(
-            msg.sender,
-            0x000000000000000000000000000000000000dEaD,
-            1 * 10 ** 6
-        );
-        start = true;
-        emit Started(true);
-    }
+    function setStart() public onlyOwner {
+    // Check prerequisites
+    require(!start, "Trading already initialized");
+    require(FEE_ADDRESS != address(0x0), "Must set fee address");
+    
+    // Define token amounts with proper decimal handling
+    uint256 requiredUSDC = 1 * 10**6;  // 1 USDC (6 decimals)
+    uint256 mintAmount = 10000 * 10**6;  // 10,001 CHICKS (6 decimals)
+    uint256 burnAmount = 1 * 10**6;  // 1 CHICKS (6 decimals)
+    
+    // Transfer 1 USDC from owner to contract
+    usdcToken.safeTransferFrom(msg.sender, address(this), requiredUSDC);
+    
+    // Mint 10,000 CHICKS tokens to admin
+    mint(msg.sender, mintAmount);
+    
+    // Admin sends 1 CHICKS to burn address
+    _transfer(
+        msg.sender,
+        0x000000000000000000000000000000000000dEaD,
+        burnAmount
+    );
+    
+    // Enable trading
+    start = true;
+    emit Started(true);
+}
 
     function mint(address to, uint256 value) private {
         require(to != address(0x0), "Can't mint to to 0x0 address");
